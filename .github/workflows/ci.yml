@@ -24,6 +24,12 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      - name: Debug tree
+        run: |
+          pwd
+          ls -la
+          ls -la tests || true
+
       - name: Run tests
         run: |
-          pytest -q
+          pytest -q tests
