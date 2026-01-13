@@ -31,5 +31,7 @@ jobs:
           ls -la tests || true
 
       - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -q tests
