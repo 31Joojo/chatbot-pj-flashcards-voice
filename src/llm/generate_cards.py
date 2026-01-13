@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 import requests
 
-from prompts import FLASHCARDS_PROMPT
+from .prompts import FLASHCARDS_PROMPT
 
 ### Class : OllamaError
 class OllamaError(RuntimeError):
