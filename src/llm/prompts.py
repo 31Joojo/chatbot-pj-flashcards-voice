@@ -1,4 +1,4 @@
-### src/llm/prompts.py
+# src/llm/prompts.py
 
 FLASHCARDS_PROMPT = """Tu es un assistant pédagogique.
 
