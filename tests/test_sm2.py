@@ -47,7 +47,6 @@ def test_sm2_third_success_interval_increases():
     """
     Check that from the third successful repetition onwards,
     the interval increases compared to the previous one.
-    :return:
     """
     ### Status after two successful repetitions
     s2 = SM2State(ease_factor=2.5, interval_days=6, repetitions=2)
