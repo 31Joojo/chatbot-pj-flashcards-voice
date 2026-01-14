@@ -205,7 +205,6 @@ def create_flashcards_ui(text, n, model):
             return gr.update(value=rows), f"✅ {len(ids)} carte(s) ajoutée(s)."
 
     except Exception as e:
-        # IMPORTANT: on renvoie toujours 2 outputs valides
         return gr.update(value=[]), f"❌ Erreur: {type(e).__name__}: {e}"
 
 
