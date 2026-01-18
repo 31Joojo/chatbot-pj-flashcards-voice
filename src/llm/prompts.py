@@ -25,3 +25,14 @@ Contraintes:
 Texte source:
 \"\"\"{source_text}\"\"\"
 """
+
+GRADE_PROMPT = """Tu es un correcteur strict.
+Compare la question, la réponse attendue et la réponse de l'élève.
+Retourne UNIQUEMENT un JSON valide (pas de texte autour) avec les clés:
+- grade: "Again" | "Hard" | "Good" | "Easy"
+- confidence: nombre entre 0 et 1
+- feedback: string court (1-2 phrases)
+Question: {question}
+Réponse attendue: {expected}
+Réponse élève: {student}
+"""
