@@ -90,7 +90,6 @@ class FlashcardRepo:
                     tags TEXT,
                     source_text TEXT,
                     created_at TEXT NOT NULL,
-
                     ease_factor REAL NOT NULL,
                     interval_days INTEGER NOT NULL,
                     repetitions INTEGER NOT NULL,
@@ -99,11 +98,31 @@ class FlashcardRepo:
                 );
                 """
             )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sources (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT,
+                    source_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                """
+            )
+
+            # Add source_id column if missing
+            try:
+                conn.execute("ALTER TABLE flashcards ADD COLUMN source_id INTEGER;")
+            except Exception:
+                # Column already exists (or another harmless migration issue)
+                pass
+
             conn.execute("CREATE INDEX IF NOT EXISTS idx_due_at ON flashcards(due_at);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flashcards_source_id ON flashcards(source_id);")
             conn.commit()
 
     ### Method : add_cards()
-    def add_cards(self, cards: List[FlashcardCreate]) -> List[int]:
+    def add_cards(self, cards: List[FlashcardCreate], source_id: int | None = None) -> List[int]:
         """
         Inserts a set of flashcards into the database.
 
@@ -121,9 +140,9 @@ class FlashcardRepo:
                 cur = conn.execute(
                     """
                     INSERT INTO flashcards
-                    (question, answer, hint, tags, source_text, created_at,
-                     ease_factor, interval_days, repetitions, due_at, last_reviewed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (question, answer, hint, tags, source_text, source_id, created_at,
+                        ease_factor, interval_days, repetitions, due_at, last_reviewed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         c.question.strip(),
@@ -131,6 +150,7 @@ class FlashcardRepo:
                         (c.hint or "").strip(),
                         tags_str,
                         (c.source_text or "").strip(),
+                        source_id,
                         _dt_to_str(now),
                         2.5,
                         0,
@@ -143,6 +163,22 @@ class FlashcardRepo:
             conn.commit()
 
         return ids
+
+    ### Method : add_source()
+    def add_source(self, source_text: str, title: str | None = None) -> int:
+        """
+        Inserts a flashcards source into the database.
+        :param str source_text:
+        :param Optional[str] title:
+        :return int:
+        """
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO sources(title, source_text, created_at) VALUES (?, ?, ?)",
+                (title, source_text, now),
+            )
+            return int(cur.lastrowid)
 
     ### Method : get_by_id()
     def get_by_id(self, card_id: int) -> Optional[Flashcard]:
@@ -158,24 +194,36 @@ class FlashcardRepo:
         return self._row_to_card(row) if row else None
 
     ### Method : get_due()
-    def get_due(self, limit: int = 20) -> List[Flashcard]:
+    def get_due(self, limit: int = 20, source_id: int | None = None) -> List[Flashcard]:
         """
         Returns flashcards that are due for review.
 
         :param int limit: Number of flashcards to return
+        :param int source_id: ID of the source text
         :return List[Flashcard]: List of flashcards IDs sorted by due date
         """
         now = _dt_to_str(datetime.now())
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM flashcards
-                WHERE due_at <= ?
+
+        sql = """
+              SELECT * \
+              FROM flashcards
+              WHERE due_at <= ? \
+              """
+        params = [now]
+
+        if source_id is not None:
+            sql += " AND source_id = ?"
+            params.append(int(source_id))
+
+        sql += """
                 ORDER BY due_at ASC
                 LIMIT ?
-                """,
-                (now, int(limit)),
-            ).fetchall()
+            """
+        params.append(int(limit))
+
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
         return [self._row_to_card(r) for r in rows]
 
     ### Method : update_review()
