@@ -36,3 +36,12 @@ Question: {question}
 Réponse attendue: {expected}
 Réponse élève: {student}
 """
+
+EXPLAIN_PROMPT = """Tu es un tuteur.
+Explique la réponse attendue de manière simple en 2-4 phrases, avec un mini exemple si utile.
+Ne mets pas de markdown, juste du texte.
+
+Question: {question}
+Réponse attendue: {expected}
+Réponse élève: {student}
+"""
