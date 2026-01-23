@@ -17,10 +17,24 @@ set_chat_repo(repo)
 tts_dir = str(Path("data/tts").resolve())
 
 CSS = """
-#stats_plot { animation: fv-pop .22s ease-out; }
-@keyframes fv-pop { from { transform: scale(.97); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+#stats_plot {
+     animation: fv-pop .22s ease-out;
+}
 
-#details_md { animation: fv-pop .18s ease-out; }
+@keyframes fv-pop {
+    from {
+        transform: scale(.97);
+        opacity: 0;
+   }
+    to {
+        transform: scale(1);
+        opacity: 1;
+   }
+}
+
+#details_md {
+    animation: fv-pop .18s ease-out;
+}
 """
 
 ### ------------------------- ###
