@@ -28,6 +28,7 @@ _EN = {
 }
 
 ### ------------------------------ Helpers ------------------------------ ###
+### Helper : _strip_accents()
 def _strip_accents(s: str) -> str:
     """
     Remove diacritical marks from a Unicode string.
