@@ -9,8 +9,8 @@ from typing import List, Optional
 
 from src.core.models import Flashcard, FlashcardCreate
 
-
-### Function : _dt_to_str()
+### ------------------------------ Helpers ------------------------------ ###
+### Helper : _dt_to_str()
 def _dt_to_str(dt: datetime) -> str:
     """
     Converts a datetime object to an ISO 8601 string.
@@ -21,7 +21,7 @@ def _dt_to_str(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
 
-### Function : _str_to_dt()
+### Helper : _str_to_dt()
 def _str_to_dt(s: str) -> datetime:
     """
     Converts an ISO 8601 string to a datetime object.
@@ -31,7 +31,7 @@ def _str_to_dt(s: str) -> datetime:
     """
     return datetime.fromisoformat(s)
 
-
+### ------------------------------- Class ------------------------------- ###
 ### Class : FlashcardRepo
 class FlashcardRepo:
     """
