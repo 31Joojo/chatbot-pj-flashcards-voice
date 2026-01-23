@@ -2,7 +2,6 @@
 ### Modules importation
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
