@@ -4,16 +4,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Dict, Optional
 
 
+### ------------------------------- Class ------------------------------- ###
 ### Class : SM2State
 @dataclass
 class SM2State:
+    """
+    Data container representing the SM-2 scheduling state of a flashcard.
+
+    This class stores the minimal set of parameters required by the
+    SM-2 spaced repetition algorithm to compute the next review interval.
+
+    :param float ease_factor: Ease factor controlling interval growth
+    :param int interval_days: Current interval before next review
+    :param int repetitions: Number of consecutive successful reviews
+    """
     ease_factor: float
     interval_days: int
     repetitions: int
 
-
+### ----------------------------- Functions ----------------------------- ###
 ### Function : sm2_update()
 def sm2_update(state: SM2State, quality: int) -> SM2State:
     """
@@ -49,7 +61,7 @@ def sm2_update(state: SM2State, quality: int) -> SM2State:
 
     ### If the recall fails the progress is reset
     if q < 3:
-        # reset
+        ### reset
         return SM2State(ease_factor=ef, interval_days=1, repetitions=0)
 
     ### Increment in the number of successful repetitions
@@ -65,7 +77,7 @@ def sm2_update(state: SM2State, quality: int) -> SM2State:
 
     return SM2State(ease_factor=ef, interval_days=interval, repetitions=reps)
 
-
+### Function : next_due()
 def next_due(interval_days: int) -> datetime:
     """
     Calculates the date of the next review of a flashcard.
