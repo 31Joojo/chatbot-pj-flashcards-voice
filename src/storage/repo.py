@@ -1,11 +1,10 @@
 # src/storage/repo.py
 ### Modules importation
 from __future__ import annotations
-
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Dict, Optional
 
 from src.core.models import Flashcard, FlashcardCreate
 
@@ -22,14 +21,53 @@ def _dt_to_str(dt: datetime) -> str:
 
 
 ### Helper : _str_to_dt()
-def _str_to_dt(s: str) -> datetime:
+def _str_to_dt(s: Optional[str]) -> Optional[datetime]:
     """
-    Converts an ISO 8601 string to a datetime object.
+    Parse an ISO-formatted datetime string into a naive UTC datetime.
 
-    :param str s: String representing a date and time in ISO 8601 format
-    :return datetime: Datetime object corresponding to the string provided
+    If the input string contains timezone information, it is converted
+    to UTC and returned as a naive datetime to ensure consistency
+    across the persistence layer.
+
+    :param Optional[str] s: ISO-formatted datetime string
+    :return Optional[datetime]: Parsed naive UTC datetime, or None
     """
-    return datetime.fromisoformat(s)
+    if not s:
+        return None
+
+    dt = datetime.fromisoformat(s)
+
+    ### Force naive UTC datetime if timezone info is present
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return dt
+
+### Helper : _new_iso()
+def _now_iso() -> str:
+    """
+    Return the current UTC time as an ISO 8601 string.
+
+    :return str: Current UTC datetime in ISO format
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+### Helper : _parse_dt()
+def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+    """
+    Parse an ISO 8601 datetime string into a datetime object.
+
+    This helper also supports strings ending with 'Z' by converting
+    them to a valid UTC offset representation.
+
+    :param Optional[str] s: ISO-formatted datetime string
+    :return Optional[datetime]: Parsed datetime object, or None
+    """
+    if not s:
+        return None
+
+    ### Normalize Zulu suffix to UTC offset
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 ### ------------------------------- Class ------------------------------- ###
 ### Class : FlashcardRepo
@@ -110,25 +148,39 @@ class FlashcardRepo:
                 """
             )
 
-            # Add source_id column if missing
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS review_plans (
+                    source_id INTEGER PRIMARY KEY,
+                    next_review_at TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
+
+            ### Add source_id column if missing
             try:
                 conn.execute("ALTER TABLE flashcards ADD COLUMN source_id INTEGER;")
             except Exception:
-                # Column already exists (or another harmless migration issue)
+                ### Column already exists
                 pass
 
             conn.execute("CREATE INDEX IF NOT EXISTS idx_due_at ON flashcards(due_at);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flashcards_source_id ON flashcards(source_id);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_plans_next_review_at ON review_plans(next_review_at);")
             conn.commit()
 
     ### Method : add_cards()
-    def add_cards(self, cards: List[FlashcardCreate], source_id: int | None = None) -> List[int]:
+    def add_cards(self, cards: List[FlashcardCreate], source_id: Optional[int] = None) -> List[int]:
         """
         Inserts a set of flashcards into the database.
 
         The cards are initialized with the default SM-2 parameters
         (ease factor = 2.5, zero interval).
+
         :param List[FlashcardCreate] cards: List of flashcards to insert
+        :param int source_id: Source id of the flashcards to insert
         :return List[int]: List of flashcards IDs
         """
         now = datetime.now()
@@ -180,6 +232,80 @@ class FlashcardRepo:
             )
             return int(cur.lastrowid)
 
+    ### Method : list_sources()
+    def list_sources(self, limit: int = 50):
+        """
+        List recently created source entries.
+
+        This method returns a compact representation of sources,
+        including a human-readable title fallback when no explicit
+        title is stored in the database.
+
+        :param int limit: Maximum number of sources to return
+        :return list: List of source descriptors (id, title, created_at)
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id,
+                       COALESCE(NULLIF(title, ''), '')       AS title,
+                       COALESCE(NULLIF(source_text, ''), '') AS source_text,
+                       created_at
+                FROM sources
+                ORDER BY id DESC LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+
+        out = []
+        for r in rows:
+            title = (r["title"] or "").strip()
+            if not title:
+                ### Build a readable fallback title if none is stored
+                preview = " ".join((r["source_text"] or "").split())
+                title = (preview[:60] + "…") if len(preview) > 60 else (preview or f"Cours {r['id']}")
+            out.append({
+                "id": int(r["id"]),
+                "title": title,
+                "created_at": r["created_at"],
+            })
+
+        return out
+
+    ### Method : count_due()
+    def count_due(self, source_id: Optional[int] = None, now_iso: Optional[str] = None) -> int:
+        """
+        Count the number of flashcards currently due for review.
+
+        The count can be restricted to a specific source if a
+        source identifier is provided.
+
+        :param Optional[int] source_id: Source identifier to filter by
+        :param Optional[str] now_iso: Reference datetime in ISO format
+        :return int: Number of due flashcards
+        """
+        now_iso = now_iso or _now_iso()
+
+        with self._connect() as conn:
+            if source_id is None:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM flashcards WHERE due_at IS NOT NULL AND due_at <= ?",
+                    (now_iso,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM flashcards
+                    WHERE source_id = ?
+                      AND due_at IS NOT NULL
+                      AND due_at <= ?
+                    """,
+                    (int(source_id), now_iso),
+                ).fetchone()
+
+        return int(row[0] or 0)
+
     ### Method : get_by_id()
     def get_by_id(self, card_id: int) -> Optional[Flashcard]:
         """
@@ -226,6 +352,72 @@ class FlashcardRepo:
 
         return [self._row_to_card(r) for r in rows]
 
+    ### Method : get_source_preview()
+    def get_source_preview(self, source_id: int) -> str:
+        """
+        Return a short preview of a source text.
+
+        The preview is extracted from the first flashcard
+        associated with the given source.
+
+        :param int source_id: Source identifier
+        :return str: Short textual preview of the source
+        """
+        sql = """
+                SELECT source_text FROM flashcards WHERE source_id=? LIMIT 1
+              """
+
+        with self._connect() as conn:
+            row = conn.execute(sql,
+                (source_id,),
+            ).fetchone()
+
+        if not row or not row[0]:
+            return f"Source {source_id}"
+
+        txt = row[0].strip().replace("\n", " ")
+        return (txt[:80] + "…") if len(txt) > 80 else txt
+
+    ### Method : get_next_due_at()
+    def get_next_due_at(self, source_id: int) -> Optional[datetime]:
+        """
+        Retrieve the earliest upcoming due date for a source.
+
+        :param int source_id: Source identifier
+        :return Optional[datetime]: Next due datetime, or None
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MIN(due_at) FROM flashcards WHERE source_id=? AND due_at IS NOT NULL",
+                (int(source_id),),
+            ).fetchone()
+
+        return _parse_dt(row[0]) if row else None
+
+    ### Method : get_review_plan()
+    def get_review_plan(self, source_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve the stored review plan for a given source.
+
+        :param int source_id: Source identifier
+        :return Optional[Dict[str, Any]]: Review plan data, or None
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT source_id, next_review_at, score, updated_at FROM review_plans WHERE source_id=?",
+                (int(source_id),),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "source_id": int(row[0]),
+            "next_review_at": row[1],
+            "score": float(row[2]),
+            "updated_at": row[3],
+        }
+
     ### Method : update_review()
     def update_review(
         self,
@@ -267,6 +459,54 @@ class FlashcardRepo:
                 ),
             )
             conn.commit()
+
+    ### Method : upsert_review_plan()
+    def upsert_review_plan(self, source_id: int, next_review_at: datetime, score: float) -> None:
+        """
+        Insert or update a review plan for a source.
+
+        If a review plan already exists for the source, it is
+        updated atomically using an UPSERT operation.
+
+        :param int source_id: Source identifier
+        :param datetime next_review_at: Recommended next review datetime
+        :param float score: Session performance score
+        :return None: This method does not return anything
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO review_plans (source_id, next_review_at, score, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(source_id) DO UPDATE SET
+                  next_review_at=excluded.next_review_at,
+                  score=excluded.score,
+                  updated_at=excluded.updated_at
+                """,
+                (int(source_id), next_review_at.isoformat(), float(score), _now_iso()),
+            )
+            conn.commit()
+
+    ### Method : upsert_review_plan()
+    def update_source_title(self, source_id: int, title: str) -> None:
+        """
+        Update the title of a source entry.
+
+        Empty or whitespace-only titles are ignored.
+
+        :param int source_id: Source identifier
+        :param str title: New title to set
+        :return None: This method does not return anything
+        """
+        title = (title or "").strip()
+        if not title:
+            return
+        with self._conn() as con:
+            con.execute(
+                "UPDATE sources SET title = ? WHERE id = ?",
+                (title, int(source_id)),
+            )
+            con.commit()
 
     ### Method : _row_to_card()
     def _row_to_card(self, r: sqlite3.Row) -> Flashcard:
