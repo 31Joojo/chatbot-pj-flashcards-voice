@@ -383,7 +383,7 @@ def chat_start(source_text, model, history, chat_state, tts_on):
         )
 
     ### Create a new logical source for the session in the database
-    title = make_source_title(src, model)  # à créer (fallback simple ou LLM)
+    title = make_source_title(src, model)
     source_id = _repo().add_source(source_text=src[:8000], title=title)
     chat_state["source_title"] = title
 
