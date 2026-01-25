@@ -35,7 +35,7 @@ CSS = """
 
 /* Scroll interne du contenu Markdown "Détails" */
 #details_panel .prose{
-     max-height: 30vh;
+     max-height: 45vh;
     /* ajuste (ex: 45vh / 60vh) */
      overflow-y: auto;
      padding-right: 10px;
