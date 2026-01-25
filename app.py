@@ -8,7 +8,7 @@ from src.storage.repo import FlashcardRepo
 from src.ui.review_flow import load_due_card, reveal_answer, grade_again, grade_hard, grade_good, grade_easy
 from src.ui.state import default_chat_state
 from src.ui.chat_flow import set_repo as set_chat_repo, chat_start, chat_send, chat_send_audio, chat_reset_to_start, \
-    show_details, _toggle_mic
+    show_details, _toggle_mic, chat_start_review
 
 ### Setting repo for storing flashcards
 DB_PATH = Path("data/flashcards.db")
@@ -16,6 +16,7 @@ repo = FlashcardRepo(DB_PATH)
 set_chat_repo(repo)
 tts_dir = str(Path("data/tts").resolve())
 
+### Style
 CSS = """
 #stats_plot {
      animation: fv-pop .22s ease-out;
@@ -32,10 +33,43 @@ CSS = """
    }
 }
 
-#details_md {
-    animation: fv-pop .18s ease-out;
+/* Scroll interne du contenu Markdown "Détails" */
+#details_panel .prose{
+     max-height: 30vh;
+    /* ajuste (ex: 45vh / 60vh) */
+     overflow-y: auto;
+     padding-right: 10px;
+    /* évite que le texte colle à la scrollbar */
+}
+
+/* Optionnel: une scrollbar un peu plus jolie */
+#details_panel .prose::-webkit-scrollbar{
+    width: 8px;
+}
+
+ #details_panel .prose::-webkit-scrollbar-thumb{
+     border-radius: 10px;
+     background: rgba(0,0,0,.25);
 }
 """
+
+### ------------------------------ Helpers ------------------------------ ###
+### Helper : refresh_courses()
+def refresh_courses():
+    """
+    Refresh the list of available courses for the UI selector.
+
+    This helper queries the database for the most recent sources
+    and formats them as (label, value) pairs compatible with
+    Gradio dropdown components.
+
+    :return gr.update: Gradio update object with refreshed choices
+    """
+    ### Fetch recent sources from the repository
+    sources = repo.list_sources(limit=200)
+
+    ### Convert sources to (title, id) tuples expected by gr.Dropdown
+    return gr.update(choices=[(s["title"], s["id"]) for s in sources])
 
 ### ------------------------- ###
 ###   Gradio user interface   ###
@@ -64,6 +98,14 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
             chat_model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
             chat_source = gr.Textbox(lines=10, label="Texte source (à coller ici)")
             btn_start = gr.Button("Start")
+
+            sources = repo.list_sources(limit=200)
+            course_dd = gr.Dropdown(
+                choices=[(s["title"], s["id"]) for s in sources],
+                label="Cours",
+                value=sources[0]["id"] if sources else None,
+            )
+            btn_review = gr.Button("Réviser ce cours", variant="secondary")
 
         ### ----- Chat panel : active conversation ----
         with chat_panel:
@@ -98,8 +140,8 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
 
                 ### Right column: sidebar
                 with gr.Column(scale=1, elem_id="sidebar"):
-                    btn_details = gr.Button("Détails (dernière correction)", visible=True)
-                    details_md = gr.Markdown(value="", visible=False, elem_id="details_md")
+                    btn_details = gr.Button("Afficher la correction", visible=True)
+                    details_md = gr.Markdown(value="", visible=False, elem_id="details_panel")
                     stats_plot = gr.Plot(label="Récap session", visible=False, elem_id="stats_plot")
 
         ### -------------- Event bindings -------------
@@ -107,6 +149,15 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
         btn_start.click(
             chat_start,
             inputs=[chat_source, chat_model, chat, chat_state, tts_on],
+            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot],
+        ).then(
+            refresh_courses, outputs=[course_dd]
+        )
+
+        ### Start a revision session
+        btn_review.click(
+            chat_start_review,
+            inputs=[course_dd, chat_model, chat, chat_state, tts_on],
             outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot],
         )
 
@@ -129,18 +180,6 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
             _toggle_mic,
             inputs=[use_mic],
             outputs=[mic, btn_mic, user, send]
-        )
-
-        ### Send audio input via microphone button
-        btn_mic.click(
-            chat_send_audio,
-            inputs=[mic, chat, chat_state, tts_on],
-            outputs=[chat, chat_state, user, details_md, bot_audio, stats_plot],
-        ).then(
-            ### Reset microphone input after processing
-            lambda: gr.update(value=None),
-            inputs=None,
-            outputs=[mic],
         )
 
         ### Automatically send audio when recording ends
