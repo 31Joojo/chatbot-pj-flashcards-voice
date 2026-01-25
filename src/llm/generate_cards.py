@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import requests
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .prompts import FLASHCARDS_PROMPT
 
@@ -149,6 +149,7 @@ def generate_cards(
     source_text: str,
     n: int = 8,
     model: str = "qwen2.5:7b-instruct",
+    avoid_questions: Optional[list[str]] = None
 ) -> Dict[str, Any]:
     """
     Generates a set of flashcards from a source text
@@ -164,6 +165,7 @@ def generate_cards(
     :param str source_text: Input text from which flashcards should be created
     :param int, optional n: Number of flashcards to generate (default 8)
     :param str, optional model: Model name Ollama used for generation
+    :param list avoid_questions: List of questions to avoid for new flashcards generation
     :return Dict[str, Any]:
         JSON structure containing the generated flashcards
         The exact format depends on the `FLASHCARDS_PROMPT` prompt
@@ -173,6 +175,19 @@ def generate_cards(
     """
     ### Building the prompt from the source text
     prompt = FLASHCARDS_PROMPT.format(n=int(n), source_text=source_text.strip())
+
+    ### Case : avoid topics already seen in flashcards previously generated
+    if avoid_questions:
+        avoid_block = "\n".join([f"- {q}" for q in avoid_questions[:20]])
+        prompt += (
+            "\n\nCartes déjà générées (NE PAS répéter / NE PAS reformuler) :\n"
+            f"{avoid_block}\n\n"
+            "Consigne additionnelle:\n"
+            f"- Génère {n} NOUVELLES cartes sur des points différents du texte.\n"
+            "- Si une carte ressemble à une question ci-dessus, remplace-la par une autre.\n"
+            "\nPrivilégie des éléments du texte non couverts par les cartes existantes : "
+            "détails, exceptions, exemples, conséquences, comparaisons, pièges classiques."
+        )
 
     ### Call to the model via Ollama with strict format constraint
     content = ollama_chat(
