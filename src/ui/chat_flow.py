@@ -23,7 +23,7 @@ from src.ui.state import reset_chat_state, reset_stats, update_stats
 from src.ui.text_utils import (
     _add_turn, _parse_int,
     _strip_md, _normalize_tags,
-    _similarity, _normalize_grade
+    _similarity, _normalize_grade, _strip_accents
 )
 
 
@@ -32,8 +32,8 @@ _REPO: Optional[FlashcardRepo] = None
 _EMOJI_RE = re.compile(r"[\U0001F000-\U0010FFFF\u2600-\u27BF\uFE0F]")
 
 MONTHS_FR = [
-    "janvier","février","mars","avril","mai","juin",
-    "juillet","août","septembre","octobre","novembre","décembre"
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre"
 ]
 
 ### ------------------------------ Helpers ------------------------------ ###
@@ -511,6 +511,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
     ### End-of-session conversational routing
     if phase == "done":
         low = msg.lower()
+        low = _strip_accents(low)
 
         ### Case : explicit request to display session details
         if "détail" in low or "detail" in low:
@@ -523,7 +524,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
             return _ret_chat_send(history, chat_state, bot_text=bot)
 
         ### Case : redirect user to the dedicated review flow for existing courses
-        if any(k in low for k in ["réviser", "reviser", "cours existant", "révision"]):
+        if any(k in low for k in ["reviser", "cours existant", "revision"]):
             bot = (
                 f"OK {emoji.emojize(':repeat_button:')} Pour réviser un cours existant, "
                 f"utilise le sélecteur de cours dans l'écran de démarrage"
@@ -533,7 +534,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
             return _ret_chat_send(history, chat_state, bot_text=bot)
 
         ### Case : add more cards on the same source
-        if any(k in low for k in ["génère", "genere", "plus", "+"]):
+        if any(k in low for k in ["genere", "generer", "plus", "ajouter", "nouvelles cartes", "+", "autres cartes", "rajouter"]):
             n = _parse_int(msg) or 5
             n = max(1, min(30, n))
             chat_state["phase"] = "need_n"
@@ -557,7 +558,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
         if fig is not None:
             chat_state["last_plot"] = fig
 
-        _ret_chat_send(history, chat_state, bot_text=bot)
+        return _ret_chat_send(history, chat_state, bot_text=bot)
 
     ### --------- Need n phase --------- ###
     ### Waiting for the number of cards to generate
@@ -574,7 +575,9 @@ def chat_send(user_msg, history, chat_state, tts_on):
 
         try:
             ### Generate cards with the LLM
-            payload = generate_cards(source, n=n, model=model)
+            ### Avoid flashcards generation of topics already treated from the source text
+            avoid = _repo().list_questions_by_source(chat_state["source_id"], limit=20)
+            payload = generate_cards(source, n=n, model=model, avoid_questions=avoid)
 
             ### Auto-generated title for the source
             title = str(payload.get("title", "") or "").strip()
@@ -587,20 +590,68 @@ def chat_send(user_msg, history, chat_state, tts_on):
 
             ### Validate generated cards before persistence
             raw = payload.get("cards", []) or []
+
+            avoid_norm = {q.strip().lower() for q in avoid if q}
+
+            ### Subfunction : _is_duplicate()
+            def _is_duplicate(q: str) -> bool:
+                """
+                Check whether a generated question is a duplicate.
+
+                This helper prevents adding redundant questions by:
+                - rejecting empty or whitespace-only questions ;
+                - rejecting exact normalized duplicates ;
+                - rejecting near-duplicates based on textual similarity.
+
+                :param str q: Question text to validate
+                :return bool: True if the question should be considered a duplicate
+                """
+                ### Normalize question text for comparison
+                qn = q.strip().lower()
+
+                ### Reject empty questions
+                if not qn:
+                    return True
+
+                ### Reject exact duplicates already seen
+                if qn in avoid_norm:
+                    return True
+
+                ### Fuzzy matching to catch near-duplicates
+                for old in list(avoid_norm)[:50]:
+                    try:
+                        if _similarity(qn, old) >= 0.85:
+                            return True
+                    except Exception:
+                        ### Similarity failure shouldn't block generation
+                        pass
+
+                return False
+
             cards = []
             for c in raw[:n]:
                 q = str(c.get("question", "")).strip()
                 a = str(c.get("answer", "")).strip()
-                if q and a:
-                    cards.append(
-                        FlashcardCreate(
-                            question=q,
-                            answer=a,
-                            hint=str(c.get("hint", "") or "").strip(),
-                            tags=_normalize_tags(c.get("tags")),
-                            source_text=source,
-                        )
+
+                if not q or not a:
+                    continue
+
+                if _is_duplicate(q):
+                    continue
+
+                cards.append(
+                    FlashcardCreate(
+                        question=q,
+                        answer=a,
+                        hint=str(c.get("hint", "") or "").strip(),
+                        tags=_normalize_tags(c.get("tags")),
+                        source_text=source,
                     )
+                )
+                avoid_norm.add(q.strip().lower())
+
+                if len(cards) >= n:
+                    break
 
             if not cards:
                 bot = emoji.emojize(":cross_mark:") + " Aucune carte exploitable n’a été générée. Réessaie avec un autre texte."

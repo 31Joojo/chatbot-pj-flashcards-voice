@@ -272,6 +272,29 @@ class FlashcardRepo:
 
         return out
 
+    ### Method : list_questions_by_source()
+    def list_questions_by_source(self, source_id: int, limit: int = 20) -> list[str]:
+        """
+        Retrieve recent questions associated with a given source.
+
+        This method is used to avoid generating duplicate
+        flashcards by inspecting already existing questions.
+
+        :param int source_id: Identifier of the source/course
+        :param int limit: Maximum number of questions to retrieve
+        :return list[str]: List of question strings
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            ### Fetch most recent questions for the given source
+            rows = conn.execute(
+                "SELECT question FROM flashcards WHERE source_id=? ORDER BY id DESC LIMIT ?",
+                (int(source_id), int(limit)),
+            ).fetchall()
+
+        return [r["question"] for r in rows if r["question"]]
+
     ### Method : count_due()
     def count_due(self, source_id: Optional[int] = None, now_iso: Optional[str] = None) -> int:
         """
@@ -304,6 +327,7 @@ class FlashcardRepo:
                     (int(source_id), now_iso),
                 ).fetchone()
 
+        ### Return only non-empty question texts
         return int(row[0] or 0)
 
     ### Method : get_by_id()
