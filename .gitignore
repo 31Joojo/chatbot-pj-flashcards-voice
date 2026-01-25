@@ -208,5 +208,6 @@ __marimo__/
 
 .idea/
 .DS_Store
+.gradio
 
 data
