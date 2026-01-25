@@ -4,14 +4,22 @@ FLASHCARDS_PROMPT = """Tu es un assistant pédagogique.
 
 Objectif:
 - Générer {n} flashcards à partir d'un texte source.
+- Générer un titre court à partir d'un texte source.
 - Les QUESTIONS doivent être en français.
 - Les RÉPONSES doivent être en français (tu peux garder les termes techniques en anglais si nécessaire).
 - Le texte source peut être en anglais.
 
 Contraintes:
 - Réponds en JSON STRICT, sans markdown, sans texte autour.
+- Le champ "title" est une CHAÎNE de caractères.
+- Le titre "title" doit résumer le thème central en 3 à 10 mots.
+- IMPORTANT: ne copie pas une phrase du texte. Ne reprends pas mot pour mot le début du texte.
+- Pas d'émojis, pas de guillemets, pas de "..." ni de "…", pas de ponctuation finale.
+- Le champ "cards" est une LISTE de {n} objets.
+- Le champ "tags" est une LISTE de 1 à 3 tags courts.
 - Format attendu:
 {{
+  "title": "...",
   "cards": [
     {{
       "question": "...",
