@@ -1,19 +1,28 @@
 # src/llm/generate_cards.py
-
 ### Modules importation
 from __future__ import annotations
 import json
-from typing import Any, Dict, List
-
+import re
 import requests
+from typing import Any, Dict, List
 
 from .prompts import FLASHCARDS_PROMPT
 
+### ------------------------------- Class ------------------------------- ###
 ### Class : OllamaError
 class OllamaError(RuntimeError):
+    """
+    Custom exception raised for Ollama-related errors.
+
+    This exception is used to explicitly signal failures
+    occurring during interactions with the Ollama API.
+
+    :return RuntimeError: Specialized runtime error for Ollama calls
+    """
     pass
 
-### Function : _extract_json()
+### ------------------------------ Helpers ------------------------------ ###
+### Helper : _extract_json()
 def _extract_json(text: str) -> Dict[str, Any]:
     """
     Extracts a valid JSON object from a string.
@@ -45,6 +54,42 @@ def _extract_json(text: str) -> Dict[str, Any]:
         ### No usable JSON found : propagate the error
         raise
 
+### Helper : _fallback_title()
+def _fallback_title(source_text: str, max_words: int = 8) -> str:
+    """
+    Generate a fallback title from a source text.
+
+    It extracts the first words of the source text
+    to create a short, human-readable title when no explicit
+    title is provided.
+
+    :param str source_text: Original source text
+    :param int max_words: Maximum number of words to include
+    :return str: Generated fallback title
+    """
+    ### Normalize whitespace
+    txt = re.sub(r"\s+", " ", (source_text or "").strip())
+
+    ### Extract the first words
+    words = txt.split(" ")
+    return " ".join(words[:max_words]).strip() or "Cours"
+
+### Helper : _clean_title()
+def _clean_title(t: str, max_len: int = 80) -> str:
+    """
+    Normalize and truncate a title string.
+
+    :param str t: Raw title string
+    :param int max_len: Maximum allowed title length
+    :return str: Cleaned and truncated title
+    """
+    ### Normalize whitespace
+    t = re.sub(r"\s+", " ", (t or "")).strip()
+
+    ### Enforce maximum length
+    return t[:max_len]
+
+### ----------------------------- Functions ----------------------------- ###
 ### Function : ollama_chat()
 def ollama_chat(
     messages: List[Dict[str, str]],
@@ -139,4 +184,29 @@ def generate_cards(
     )
 
     ### Extracting and parsing the JSON returned by the model
-    return _extract_json(content)
+    data = _extract_json(content)
+
+    ### We secure the structure
+    if not isinstance(data, dict):
+        data = {"cards": []}
+
+    ### Title
+    title = data.get("title")
+
+    if isinstance(title, list) and title:
+        title = title[0]
+        if isinstance(title, dict) and title:
+            title = next(iter(title.values()))
+
+    if not isinstance(title, str) or not title.strip():
+        title = _fallback_title(source_text)
+
+    data["title"] = _clean_title(title)
+
+    ### Cards
+    cards = data.get("cards", [])
+    if not isinstance(cards, list):
+        cards = []
+    data["cards"] = cards
+
+    return data
