@@ -55,7 +55,7 @@ def load_due_card(source_id: Optional[int] = None):
     due = repo.get_due(limit=1, source_id=source_id)
 
     if not due:
-        return None, emoji.emojize(":party_popper:") + " No cards due at the moment.", "—", "—"
+        return None, emoji.emojize(":party_popper:") + " Aucune carte n'est due pour le moment.", "—", "—"
 
     card = due[0]
     info = (
