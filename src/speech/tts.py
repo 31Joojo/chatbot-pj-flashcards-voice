@@ -74,7 +74,7 @@ def synthesize_to_wav(text: str, voice: Optional[str] = None) -> str:
 
     subprocess.run(say_cmd, check=True)
 
-    ### Step 2: Convert AIFF to WAV
+    ### Step 2 : Convert AIFF to WAV
     conv_cmd = [
         "afconvert",
         "-f", "WAVE",
