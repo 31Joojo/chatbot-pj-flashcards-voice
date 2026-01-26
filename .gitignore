@@ -211,3 +211,5 @@ __marimo__/
 .gradio
 
 data
+
+src/ui/assets
