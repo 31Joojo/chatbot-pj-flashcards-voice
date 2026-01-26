@@ -17,41 +17,8 @@ set_chat_repo(repo)
 tts_dir = str(Path("data/tts").resolve())
 
 ### Style
-CSS = """
-#stats_plot {
-     animation: fv-pop .22s ease-out;
-}
-
-@keyframes fv-pop {
-    from {
-        transform: scale(.97);
-        opacity: 0;
-   }
-    to {
-        transform: scale(1);
-        opacity: 1;
-   }
-}
-
-/* Scroll interne du contenu Markdown "Détails" */
-#details_panel .prose{
-     max-height: 45vh;
-    /* ajuste (ex: 45vh / 60vh) */
-     overflow-y: auto;
-     padding-right: 10px;
-    /* évite que le texte colle à la scrollbar */
-}
-
-/* Optionnel: une scrollbar un peu plus jolie */
-#details_panel .prose::-webkit-scrollbar{
-    width: 8px;
-}
-
- #details_panel .prose::-webkit-scrollbar-thumb{
-     border-radius: 10px;
-     background: rgba(0,0,0,.25);
-}
-"""
+CSS_PATH = Path(__file__).parent / "src" / "ui" / "assets" / "style.css"
+APP_CSS = CSS_PATH.read_text(encoding="utf-8") if CSS_PATH.exists() else ""
 
 ### ------------------------------ Helpers ------------------------------ ###
 ### Helper : refresh_courses()
@@ -74,75 +41,104 @@ def refresh_courses():
 ### ------------------------- ###
 ###   Gradio user interface   ###
 ### ------------------------- ###
-
 ### Main Gradio application container
-with gr.Blocks(title="Flashcards Voice MVP") as demo:
+with gr.Blocks(title="AudrAI") as demo:
     ### Application title
-    gr.Markdown(f"# {emoji.emojize(':headphone:')} Flashcards Voice")
+    gr.Markdown(f"# Bonjour, je suis AudrAI. Quel cours veux-tu réviser aujourd’hui ?")
 
     ### ------------------------- ###
     ###    Chat interaction tab   ###
     ### ------------------------- ###
     with gr.Tab("Chat"):
-        gr.Markdown("### Mode Chat (Start → Génération → Quiz)")
-
         ### Central state object storing the conversational state machine
         chat_state = gr.State(default_chat_state())
 
         ### Panels used to switch between start and chat views
         start_panel = gr.Group(visible=True)
-        chat_panel = gr.Group(visible=False)
+        chat_panel = gr.Group(visible=False, elem_id="session_root")
 
         ### -------- Start panel : source text --------
         with start_panel:
-            chat_model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
-            chat_source = gr.Textbox(lines=10, label="Texte source (à coller ici)")
-            btn_start = gr.Button("Start")
+            with gr.Column(variant="panel", elem_classes="start_content"):
+                chat_source = gr.Textbox(
+                    lines=12,
+                    label="Entrée texte",
+                    info="Dans cet espace, tu fourniras le texte qui permettra de lancer ta session de révision.",
+                    placeholder="Colle le contenu de ton cours ici :",
+                    autoscroll=True,
+                    interactive=True,
+                    elem_id="textbox_style"
+                )
 
-            sources = repo.list_sources(limit=200)
-            course_dd = gr.Dropdown(
-                choices=[(s["title"], s["id"]) for s in sources],
-                label="Cours",
-                value=sources[0]["id"] if sources else None,
-            )
-            btn_review = gr.Button("Réviser ce cours", variant="secondary")
+                btn_start = gr.Button("Commencer", variant="primary", elem_classes="btn_start")
+
+                sources = repo.list_sources(limit=200)
+                course_dd = gr.Dropdown(
+                    choices=[(s["title"], s["id"]) for s in sources],
+                    label="Sélecteur de cours à réviser",
+                    interactive=True,
+                    value=sources[0]["id"] if sources else None,
+                )
+
+                btn_review = gr.Button("Réviser ce cours", variant="primary", elem_classes="btn_review")
+
+            with gr.Accordion("Paramètres", open=False):
+                chat_model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
 
         ### ----- Chat panel : active conversation ----
         with chat_panel:
-            with gr.Row():
+            with gr.Row(equal_height=True, elem_id="session_row"):
                 ### Left column : conversation and inputs
-                with gr.Column(scale=3):
-                    chat = gr.Chatbot(label="Flashcards Bot")
+                with gr.Column(scale=3, elem_id="session_left"):
+                    with gr.Group(elem_id="chat_scroller"):
+                        chat = gr.Chatbot(label="", show_label=False, height=420)
 
-                    ### Toggle between text input and microphone input
-                    use_mic = gr.Checkbox(label=f"{emoji.emojize(':studio_microphone:')}️ Utiliser le micro",
-                                          value=False)
+                    with gr.Group(elem_id="composer"):
+                        ### Microphone input
+                        mic = gr.Audio(sources=["microphone"], type="filepath", label="", show_label=False, visible=False, elem_id="mic_rec")
+                        mic_mode = gr.State(False)
+                        btn_record = gr.Button("Parler", variant="primary")
 
-                    ### Text-based user input
-                    user = gr.Textbox(label="Message", placeholder="Ex: 8, puis tes réponses...")
+                        with gr.Row(equal_height=True):
+                            ### Text-based user input
+                            user = gr.Textbox(
+                                label="",
+                                lines=1,
+                                max_lines=2,
+                                show_label=False,
+                                placeholder="Écris ton message ici",
+                                elem_id="text_input",
+                                scale=8,
+                                autoscroll=True,
+                            )
 
-                    ### Microphone input
-                    mic = gr.Audio(sources=["microphone"], type="filepath", label="Micro (audio)", visible=False)
+                            ### Send buttons
+                            send = gr.Button("Envoyer", scale=1, variant="stop")
 
-                    ### Send buttons
-                    send = gr.Button("Envoyer")
-                    btn_mic = gr.Button("Envoyer (micro)", visible=False)
+                        ### Reset the session with a new source text
+                        btn_change_text = gr.Button("Changer de texte", variant="primary", elem_id="change_text_btn")
 
-                    ### Reset the session with a new source text
-                    btn_change_text = gr.Button("Changer de texte", variant="secondary")
+                        ### Enable or disable text-to-speech for bot responses
+                        tts_on = gr.Checkbox(
+                            label=f"{emoji.emojize(':speaker_high_volume:')} Lire les réponses à voix haute",
+                            value=True,
+                            elem_id="tts_toggle"
+                        )
 
-                    ### Enable or disable text-to-speech for bot responses
-                    tts_on = gr.Checkbox(
-                        label=f"{emoji.emojize(':speaker_high_volume:')} Lire les réponses à voix haute", value=True)
-
-                    ### Audio player for synthesized bot responses
-                    bot_audio = gr.Audio(type="filepath", autoplay=True)
+                        ### Audio player for synthesized bot responses
+                        bot_audio = gr.Audio(
+                            type="filepath",
+                            autoplay=True,
+                            label="",
+                            show_label=False,
+                            elem_id="bot_audio",
+                        )
 
                 ### Right column: sidebar
-                with gr.Column(scale=1, elem_id="sidebar"):
+                with gr.Column(scale=1, elem_id="session_right"):
                     btn_details = gr.Button("Afficher la correction", visible=True)
                     details_md = gr.Markdown(value="", visible=False, elem_id="details_panel")
-                    stats_plot = gr.Plot(label="Récap session", visible=False, elem_id="stats_plot")
+                    stats_plot = gr.Plot(label="", show_label=False, visible=False, elem_id="stats_plot")
 
         ### -------------- Event bindings -------------
         ### Start a new chat session
@@ -175,11 +171,34 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
             outputs=[chat, chat_state, user, details_md, bot_audio, stats_plot],
         )
 
-        ### Toggle microphone mode
-        use_mic.change(
-            _toggle_mic,
-            inputs=[use_mic],
-            outputs=[mic, btn_mic, user, send]
+        ### Helper : toggle_mic_mode()
+        def toggle_mic_mode(mode: bool):
+            """
+            Toggle between text input mode and microphone input mode.
+
+            :param bool mode: Current microphone mode state
+            :return tuple: Updated mode flag and Gradio visibility updates
+            """
+            ### Toggle the current mode
+            mode = not mode
+
+            ### mode True -> show microphone and hide text input and send button
+            ### mode False -> hide microphone and show text input and send button
+            return (
+                mode,
+                ### Mic input
+                gr.update(visible=mode),
+                ### Text input
+                gr.update(visible=not mode),
+                ### Send button
+                gr.update(visible=not mode),
+            )
+
+        ### Button to record voice message
+        btn_record.click(
+            toggle_mic_mode,
+            inputs=[mic_mode],
+            outputs=[mic_mode, mic, user, send],
         )
 
         ### Automatically send audio when recording ends
@@ -211,47 +230,47 @@ with gr.Blocks(title="Flashcards Voice MVP") as demo:
     ### ------------------------- ###
     ###  Flashcard creation tab   ###
     ### ------------------------- ###
-    with gr.Tab("Créer"):
-        model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
-        n = gr.Slider(3, 20, value=8, step=1, label="Nombre de cartes")
-        text = gr.Textbox(lines=10, label="Texte source", placeholder="Colle des notes de cours (anglais OK).")
+    ### with gr.Tab("Créer"):
+    ###     model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
+    ###     n = gr.Slider(3, 20, value=8, step=1, label="Nombre de cartes")
+    ###     text = gr.Textbox(lines=10, label="Texte source", placeholder="Colle des notes de cours (anglais OK).")
 
-        btn = gr.Button("Générer & sauvegarder")
+    ###     btn = gr.Button("Générer & sauvegarder")
 
-        preview = gr.Dataframe(
-            headers=["id", "question", "answer", "hint", "tags"],
-            datatype=["number", "str", "str", "str", "str"],
-            interactive=False,
-            label="Aperçu",
-        )
-        msg = gr.Markdown(value="")
+    ###     preview = gr.Dataframe(
+    ###         headers=["id", "question", "answer", "hint", "tags"],
+    ###         datatype=["number", "str", "str", "str", "str"],
+    ###         interactive=False,
+    ###         label="Aperçu",
+    ###     )
+    ###     msg = gr.Markdown(value="")
 
     ### ------------------------- ###
     ###     Manual review tab     ###
     ### ------------------------- ###
-    with gr.Tab("Réviser"):
-        card_id = gr.State(value=None)
+    ### with gr.Tab("Réviser"):
+    ###     card_id = gr.State(value=None)
 
-        btn_load = gr.Button("Charger une carte due")
-        info = gr.Markdown()
-        question = gr.Markdown("—")
-        answer = gr.Markdown("—")
-        btn_reveal = gr.Button("Afficher la réponse")
+    ###     btn_load = gr.Button("Charger une carte due")
+    ###     info = gr.Markdown()
+    ###     question = gr.Markdown("—")
+    ###     answer = gr.Markdown("—")
+    ###     btn_reveal = gr.Button("Afficher la réponse")
 
-        ### Grading buttons
-        with gr.Row():
-            b_again = gr.Button("Again")
-            b_hard = gr.Button("Hard")
-            b_good = gr.Button("Good")
-            b_easy = gr.Button("Easy")
+    ###     ### Grading buttons
+    ###     with gr.Row():
+    ###         b_again = gr.Button("Again")
+    ###         b_hard = gr.Button("Hard")
+    ###         b_good = gr.Button("Good")
+    ###         b_easy = gr.Button("Easy")
 
-        btn_load.click(load_due_card, outputs=[card_id, info, question, answer])
-        btn_reveal.click(reveal_answer, inputs=[card_id], outputs=[answer])
+    ###     btn_load.click(load_due_card, outputs=[card_id, info, question, answer])
+    ###     btn_reveal.click(reveal_answer, inputs=[card_id], outputs=[answer])
 
-        b_again.click(grade_again, inputs=[card_id], outputs=[card_id, answer, question, info])
-        b_hard.click(grade_hard, inputs=[card_id], outputs=[card_id, answer, question, info])
-        b_good.click(grade_good, inputs=[card_id], outputs=[card_id, answer, question, info])
-        b_easy.click(grade_easy, inputs=[card_id], outputs=[card_id, answer, question, info])
+    ###     b_again.click(grade_again, inputs=[card_id], outputs=[card_id, answer, question, info])
+    ###     b_hard.click(grade_hard, inputs=[card_id], outputs=[card_id, answer, question, info])
+    ###     b_good.click(grade_good, inputs=[card_id], outputs=[card_id, answer, question, info])
+    ###     b_easy.click(grade_easy, inputs=[card_id], outputs=[card_id, answer, question, info])
 
 ### ------------------------- ###
 ###    Application launch     ###
@@ -261,8 +280,9 @@ try:
         show_error=True,
         debug=True,
         inline=False,
-        css=CSS,
-        allowed_paths=[tts_dir]
+        css=APP_CSS,
+        allowed_paths=[tts_dir],
+        theme=gr.themes.Soft()
     )
 except Exception as e:
     print(f"Erreur lors du lancement : {e}")
