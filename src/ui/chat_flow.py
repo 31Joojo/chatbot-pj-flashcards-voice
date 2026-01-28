@@ -153,9 +153,9 @@ def _mk_session_details(entries):
             tags = []
 
         if tags:
-            lines.append(f"**Tags :** {', '.join(tags)}")
+            lines.append(f"\n**Tags :** {', '.join(tags)}")
 
-        lines.append("\n---\n")
+        lines.append("\n---")
 
     return "\n".join(lines).strip()
 
@@ -308,6 +308,47 @@ def _say_date_fr(date):
     :return str: French-formatted date string
     """
     return f"le {date.day} {MONTHS_FR[date.month-1]} {date.year}"
+
+### Helper : _normalize_llm_grade()
+def _normalize_llm_grade(raw: str, feedback: str = "", conf: float = 0.0) -> str:
+    """
+    Normalize a raw grade returned by an LLM into a valid SM-2 label.
+
+    :param str raw: Raw grade string returned by the LLM
+    :param str feedback: Optional textual feedback from the LLM
+    :param float conf: Confidence score associated with the grade
+    :return str: Normalized grade ("Again", "Hard", "Good", or "Easy")
+    """
+    ### Normalize inputs
+    r = (raw or "").strip().lower()
+    fb = (feedback or "").strip().lower()
+
+    ### Direct mapping for common grade variants
+    mapping = {
+        # Again
+        "again": "Again", "wrong": "Again", "incorrect": "Again",
+        "fail": "Again", "0": "Again",
+        # Hard
+        "hard": "Hard", "partial": "Hard",
+        "incomplete": "Hard", "medium": "Hard",
+        # Good
+        "good": "Good", "correct": "Good",
+        "ok": "Good", "right": "Good",
+        # Easy
+        "easy": "Easy", "perfect": "Easy", "excellent": "Easy",
+    }
+    if r in mapping:
+        return mapping[r]
+
+    ### Fallback
+    if any(k in fb for k in ["parfait", "parfaite", "exact", "correct", "bonne réponse"]):
+        return "Easy" if conf >= 0.95 else "Good"
+
+    if conf <= 0.2:
+        return "Again"
+
+    ### Default conservative fallback
+    return "Hard"
 
 ### ----------------------------- Functions ----------------------------- ###
 ### Function : show_details()
@@ -515,7 +556,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
 
         ### Case : explicit request to display session details
         if "détail" in low or "detail" in low:
-            bot = f"Voici les détails de la session️."
+            bot = "Voici les détails de la session️."
             history = _add_turn(history, msg, bot)
 
             chat_state["details_visible"] = True
@@ -528,20 +569,46 @@ def chat_send(user_msg, history, chat_state, tts_on):
             bot = (
                 f"OK {emoji.emojize(':repeat_button:')} Pour réviser un cours existant, "
                 f"utilise le sélecteur de cours dans l'écran de démarrage"
-                f"ou va dans l'onglet **Réviser**, puis lance une session."
+                f" ou va dans l'onglet **Réviser**, puis lance une session."
             )
             history = _add_turn(history, msg, bot)
             return _ret_chat_send(history, chat_state, bot_text=bot)
 
         ### Case : add more cards on the same source
-        if any(k in low for k in ["genere", "generer", "plus", "ajouter", "nouvelles cartes", "+", "autres cartes", "rajouter"]):
+        if any(k in low for k in ["genere", "generer", "plus", "ajouter", "nouvelles cartes", "+", "autres cartes", "rajouter", "continuer", "continue"]):
             n = _parse_int(msg) or 5
             n = max(1, min(30, n))
             chat_state["phase"] = "need_n"
             bot = (
                 f"OK {emoji.emojize(':thumbs_up_medium-dark_skin_tone:')} "
-                f"Combien de cartes veux-tu ajouter ? (par défaut: {n})"
+                f"Combien de cartes veux-tu ajouter ? (Tu peux en demander {n} par exemple)."
             )
+            history = _add_turn(history, msg, bot)
+            return _ret_chat_send(history, chat_state, bot_text=bot)
+
+        ### Case : revising already-reviewed card
+        if any(k in low for k in
+               ["revoir", "repasser", "refaire", "reviser quand meme", "réviser quand même", "cartes travaillees",
+                "retravailler"]):
+            sid = chat_state.get("source_id")
+            if not sid:
+                bot = "Je n’ai pas de cours en contexte. Clique Start."
+                history = _add_turn(history, msg, bot)
+                return _ret_chat_send(history, chat_state, bot_text=bot)
+
+            ids = _repo().list_recent_card_ids_by_source(int(sid), limit=10, reviewed_only=True)
+            if not ids:
+                bot = "Aucune carte à revoir pour ce cours. Tu peux générer de nouvelles cartes."
+                history = _add_turn(history, msg, bot)
+                return _ret_chat_send(history, chat_state, bot_text=bot)
+
+            chat_state["practice_mode"] = True
+            chat_state["practice_queue"] = ids[1:]
+            chat_state["pending_card_id"] = ids[0]
+            chat_state["phase"] = "quiz_answer"
+
+            first = _repo().get_by_id(int(ids[0]))
+            bot = f"OK {emoji.emojize(':check_mark_button:') } On revoit les cartes déjà travaillées.\n\n{emoji.emojize(':brain:')} **Question :** {first.question}"
             history = _add_turn(history, msg, bot)
             return _ret_chat_send(history, chat_state, bot_text=bot)
 
@@ -671,7 +738,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
         if not due:
             chat_state["phase"] = "idle"
             bot = (
-                f"{emoji.emojize(':check_mark_button:')} {len(cards)} cartes ajoutées. "
+                f"{emoji.emojize(':check_mark_button:')} {len(cards)} {'cartes ajoutées' if len(cards) > 1 else 'carte ajoutée'}."
                 f"{emoji.emojize(':party_popper:')} Rien à réviser."
             )
             history = _add_turn(history, msg, bot)
@@ -682,7 +749,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
         chat_state["phase"] = "quiz_answer"
 
         bot = (
-            f"{emoji.emojize(':check_mark_button:')} {len(cards)} cartes ajoutées.\n\n"
+            f"{emoji.emojize(':check_mark_button:')} {len(cards)} {'cartes ajoutées' if len(cards) > 1 else 'carte ajoutée'}.\n\n"
             f"{emoji.emojize(':brain:')} **Question 1 :** {card.question}"
         )
         history = _add_turn(history, msg, bot)
@@ -711,7 +778,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
 
         ### Case : explanation intent detection
         lower = msg.lower()
-        if any(k in lower for k in ["explique", "je ne sais pas", "hint"]):
+        if any(k in lower for k in ["explique", "je ne sais pas", "hint", "je ne sais plus", "j'ai oulie", "me rappelle plus", "me rappelle pas"]):
             model = chat_state.get("model", "qwen2.5:7b-instruct")
 
             ### Short explanation with Ollama
@@ -736,9 +803,9 @@ def chat_send(user_msg, history, chat_state, tts_on):
         ### Auto-grade with Ollama
         try:
             verdict = grade_with_ollama(card.question, card.answer, msg, model=model)
-            label = str(verdict.get("grade", "")).strip()
             conf = float(verdict.get("confidence", 0.0))
             feedback = str(verdict.get("feedback", "")).strip()
+            label = _normalize_llm_grade(verdict.get("grade", ""), feedback, conf)
         except Exception:
             sim = _similarity(msg, card.answer)
             if sim >= 0.75:
@@ -747,9 +814,6 @@ def chat_send(user_msg, history, chat_state, tts_on):
                 label, conf, feedback = "Hard", sim, "Partiellement correct, mais incomplet."
             else:
                 label, conf, feedback = "Again", sim, "Réponse insuffisante ou incorrecte."
-
-        if label not in {"Again", "Hard", "Good", "Easy"}:
-            label = "Hard"
 
         ### ---- Log answer for summary ----
         log = chat_state.setdefault("details_log", [])
@@ -789,6 +853,21 @@ def chat_send(user_msg, history, chat_state, tts_on):
         ### Applying SM-2
         sid = chat_state.get("source_id")
         next_id, status, question, info = grade_card(int(cid), label, source_id=sid)
+
+        if chat_state.get("practice_mode"):
+            queue = chat_state.get("practice_queue") or []
+            if queue:
+                next_id = int(queue.pop(0))
+                chat_state["practice_queue"] = queue
+                try:
+                    question = _repo().get_by_id(next_id).question
+                except Exception:
+                    question = ""
+            else:
+                ### Practice session is done
+                next_id = None
+                chat_state["practice_mode"] = False
+                chat_state["practice_queue"] = []
 
         ### Update session statistics
         update_stats(chat_state, label, conf)
@@ -835,13 +914,13 @@ def chat_send(user_msg, history, chat_state, tts_on):
                 f"{emoji.emojize(':party_popper:')} Plus de cartes dues.\n\n"
                 f"**Récap session**:\n"
                 f"- Questions notées : **{chat_state['graded']}**\n"
-                f"- Moyenne confiance : **{avg_conf * 100:.1f} %**\n"
+                # f"- Moyenne confiance : **{avg_conf * 100:.1f} %**\n"
                 f"- Again/Hard/Good/Easy : "
                 f"{chat_state['grade_counts'].get('Again', 0)}/"
                 f"{chat_state['grade_counts'].get('Hard', 0)}/"
                 f"{chat_state['grade_counts'].get('Good', 0)}/"
                 f"{chat_state['grade_counts'].get('Easy', 0)}\n\n"
-                f"- Score global : **{score * 100:.2f} %**\n"
+                f"- Score global : **{score * 100:.1f} %**\n"
                 f"- Prochaine révision recommandée : **{date_str}** "
                 f"(~{sugg.days} jour(s) – {sugg.reason})"
                 f"{weak_txt}\n\n"
@@ -855,7 +934,7 @@ def chat_send(user_msg, history, chat_state, tts_on):
 
             tts_recap = (
                 "Session terminée. Plus de cartes dues. "
-                f"Score global : {score * 100:.2f} %. "
+                f"Score global : {score * 100:.1f} %. "
                 f"Prochaine révision recommandée {_say_date_fr(recommended)}, "
                 f"dans environ {sugg.days} jour{'s' if sugg.days > 1 else ''}. "
                 "Tu veux changer de texte ou réviser un cours existant ?"
@@ -1113,7 +1192,16 @@ def chat_start_review(source_id: int, model: str, history, chat_state, tts_on):
     ### Fetch next due card
     due = _repo().get_due(limit=1, source_id=sid)
     if not due:
-        bot = f"{emoji.emojize(':check_mark_button:')} Aucune carte due pour ce cours pour l’instant."
+        chat_state["pending_card_id"] = None
+        chat_state["phase"] = "done"
+
+        bot = (
+            f"{emoji.emojize(':check_mark_button:')} Aucune carte due pour ce cours pour l’instant.\n\n"
+            "Tu peux :\n"
+            "- demander **à générer plus de cartes**\n"
+            "- ou **revoir les cartes travaillées**.\n"
+            "- ou cliquer **Changer de texte**."
+        )
         history.append({"role": "assistant", "content": bot})
         return (
             history, chat_state,
@@ -1122,6 +1210,7 @@ def chat_start_review(source_id: int, model: str, history, chat_state, tts_on):
             gr.update(value=None, visible=False),
         )
 
+    chat_state["phase"] = "quiz_answer"
     card = due[0]
     chat_state["pending_card_id"] = card.id
 

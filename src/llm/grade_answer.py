@@ -3,7 +3,7 @@
 import requests
 import json
 
-from src.llm.prompts import *
+from src.llm.prompts import GRADE_PROMPT, EXPLAIN_PROMPT
 
 ### ----------------------------- Functions ----------------------------- ###
 ### Function : grade_with_ollama()
