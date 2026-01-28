@@ -1,0 +1,9 @@
+requests>=2.31
+ruff==0.14.11
+pytest>=8.0
+gradio>=4.0
+setuptools<81
+faster-whisper>=1.0.0
+soundfile>=0.12
+numpy>=1.26
+pyttsx3>=2.90
