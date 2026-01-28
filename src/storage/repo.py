@@ -295,6 +295,58 @@ class FlashcardRepo:
 
         return [r["question"] for r in rows if r["question"]]
 
+    ### Method : list_recent_card_ids_by_source()
+    def list_recent_card_ids_by_source(
+            self,
+            source_id: int,
+            limit: int = 10,
+            reviewed_only: bool = True
+    ) -> list[int]:
+        """
+        Retrieve recent flashcard identifiers for a given source.
+
+        If no reviewed cards are found, it falls back to the most recently created cards.
+
+        :param int source_id: Identifier of the source/course
+        :param int limit: Maximum number of card IDs to return
+        :param bool reviewed_only: Whether to prioritize already reviewed cards
+        :return list[int]: List of flashcard IDs
+        """
+        ### Open a database cursor
+        cur = self._connect().cursor()
+
+        if reviewed_only:
+            ### Prefer cards that have already been reviewed
+            cur.execute(
+                """
+                SELECT id
+                FROM flashcards
+                WHERE source_id = ?
+                  AND last_reviewed_at IS NOT NULL
+                ORDER BY last_reviewed_at DESC, id DESC LIMIT ?
+                """,
+                (int(source_id), int(limit)),
+            )
+            rows = cur.fetchall()
+            ids = [int(r[0]) for r in rows]
+
+            ### Return early if reviewed cards are available
+            if ids:
+                return ids
+
+        ### Fallback -> return most recent cards from this source
+        cur.execute(
+            """
+            SELECT id
+            FROM flashcards
+            WHERE source_id = ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (int(source_id), int(limit)),
+        )
+
+        return [int(r[0]) for r in cur.fetchall()]
+
     ### Method : count_due()
     def count_due(self, source_id: Optional[int] = None, now_iso: Optional[str] = None) -> int:
         """

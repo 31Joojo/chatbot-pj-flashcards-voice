@@ -5,10 +5,9 @@ import emoji
 import gradio as gr
 
 from src.storage.repo import FlashcardRepo
-from src.ui.review_flow import load_due_card, reveal_answer, grade_again, grade_hard, grade_good, grade_easy
 from src.ui.state import default_chat_state
 from src.ui.chat_flow import set_repo as set_chat_repo, chat_start, chat_send, chat_send_audio, chat_reset_to_start, \
-    show_details, _toggle_mic, chat_start_review
+    show_details, chat_start_review
 
 ### Setting repo for storing flashcards
 DB_PATH = Path("data/flashcards.db")
@@ -19,6 +18,9 @@ tts_dir = str(Path("data/tts").resolve())
 ### Style
 CSS_PATH = Path(__file__).parent / "src" / "ui" / "assets" / "style.css"
 APP_CSS = CSS_PATH.read_text(encoding="utf-8") if CSS_PATH.exists() else ""
+
+### Header
+WELCOME_HEADER = "## Bonjour, je suis AudrAI. Quel cours veux-tu réviser aujourd’hui ?"
 
 ### ------------------------------ Helpers ------------------------------ ###
 ### Helper : refresh_courses()
@@ -38,13 +40,102 @@ def refresh_courses():
     ### Convert sources to (title, id) tuples expected by gr.Dropdown
     return gr.update(choices=[(s["title"], s["id"]) for s in sources])
 
+### Helper : _get_title_for_source()
+def _get_title_for_source(source_id: int) -> str:
+    """
+    Retrieve a human-readable title for a given source.
+
+    :param int source_id: Identifier of the source
+    :return str: Best available title for display
+    """
+    try:
+        ### Search through known sources
+        for s in repo.list_sources(limit=500):
+
+            ### Match the requested source identifier
+            if int(s.get("id", 0)) == int(source_id):
+
+                ### Retrieve explicit title when available
+                t = (s.get("title") or "").strip()
+                if t:
+                    return t
+
+                ### Fallback to preview text if title is missing
+                p = (s.get("preview") or "").strip()
+                if p:
+                    return p
+
+    except Exception:
+        pass
+
+    ### Final fallback if nothing was found
+    return f"Cours {source_id}"
+
+### ------------------------------ Wrappers ----------------------------- ###
+def chat_start_ui(source_text, model, history, chat_state, tts_on):
+    """
+    UI wrapper for starting a flashcard creation session.
+
+    :param source_text: Source text provided by the user
+    :param model: Ollama model name
+    :param history: Current chat history
+    :param chat_state: Chat state machine
+    :param tts_on: Whether text-to-speech is enabled
+    :return tuple: chat_start outputs extended with a UI header update
+    """
+    ### Delegate core logic to the shared chat_start handler
+    out = chat_start(source_text, model, history, chat_state, tts_on)
+
+    ### UI header for flashcard creation mode
+    header = "## Création de flashcards"
+
+    ### Append header update to the original outputs
+    return *out, gr.update(value=header)
+
+def chat_start_review_ui(source_id, model, history, chat_state, tts_on):
+    """
+    UI wrapper for starting a review session.
+
+    :param source_id: Identifier of the source to review
+    :param model: Ollama model name
+    :param history: Current chat history
+    :param chat_state: Chat state machine
+    :param tts_on: Whether text-to-speech is enabled
+    :return tuple: chat_start_review outputs extended with a UI header update
+    """
+    ### Delegate review initialization to the core handler
+    out = chat_start_review(source_id, model, history, chat_state, tts_on)
+
+    ### Build a descriptive header when a source is selected
+    if source_id:
+        title = _get_title_for_source(int(source_id))
+        header = f"## Session de révision — {title}"
+    else:
+        header = "## Session de révision"
+
+    ### Append header update to the original outputs
+    return *out, gr.update(value=header)
+
+def chat_reset_to_start_ui(chat_state):
+    """
+    UI wrapper for resetting the chat to its initial state.
+
+    :param chat_state: Current chat state
+    :return tuple: Reset outputs extended with a UI header update
+    """
+    ### Reset the chat state and UI panels
+    out = chat_reset_to_start(chat_state)
+
+    ### Restore the welcome header
+    return *out, gr.update(value=WELCOME_HEADER)
+
 ### ------------------------- ###
 ###   Gradio user interface   ###
 ### ------------------------- ###
 ### Main Gradio application container
 with gr.Blocks(title="AudrAI") as demo:
     ### Application title
-    gr.Markdown(f"# Bonjour, je suis AudrAI. Quel cours veux-tu réviser aujourd’hui ?")
+    chat_header = gr.Markdown(WELCOME_HEADER, elem_id="chat_header")
 
     ### ------------------------- ###
     ###    Chat interaction tab   ###
@@ -113,7 +204,7 @@ with gr.Blocks(title="AudrAI") as demo:
                             )
 
                             ### Send buttons
-                            send = gr.Button("Envoyer", scale=1, variant="stop")
+                            send = gr.Button("Envoyer", scale=1, variant="stop", icon="src/ui/assets/send_6532019.png")
 
                         ### Reset the session with a new source text
                         btn_change_text = gr.Button("Changer de texte", variant="primary", elem_id="change_text_btn")
@@ -143,18 +234,18 @@ with gr.Blocks(title="AudrAI") as demo:
         ### -------------- Event bindings -------------
         ### Start a new chat session
         btn_start.click(
-            chat_start,
+            chat_start_ui,
             inputs=[chat_source, chat_model, chat, chat_state, tts_on],
-            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot],
+            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot, chat_header],
         ).then(
             refresh_courses, outputs=[course_dd]
         )
 
         ### Start a revision session
         btn_review.click(
-            chat_start_review,
+            chat_start_review_ui,
             inputs=[course_dd, chat_model, chat, chat_state, tts_on],
-            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot],
+            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot, chat_header],
         )
 
         ### Send a text message
@@ -215,9 +306,9 @@ with gr.Blocks(title="AudrAI") as demo:
 
         ### Reset chat to the initial start screen
         btn_change_text.click(
-            chat_reset_to_start,
+            chat_reset_to_start_ui,
             inputs=[chat_state],
-            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot, mic, user],
+            outputs=[chat, chat_state, start_panel, chat_panel, details_md, bot_audio, stats_plot, mic, user, chat_header],
         )
 
         ### Toggle visibility of grading details
@@ -226,51 +317,6 @@ with gr.Blocks(title="AudrAI") as demo:
             inputs=[chat, chat_state],
             outputs=[chat, chat_state, details_md],
         )
-
-    ### ------------------------- ###
-    ###  Flashcard creation tab   ###
-    ### ------------------------- ###
-    ### with gr.Tab("Créer"):
-    ###     model = gr.Textbox(value="qwen2.5:7b-instruct", label="Modèle Ollama")
-    ###     n = gr.Slider(3, 20, value=8, step=1, label="Nombre de cartes")
-    ###     text = gr.Textbox(lines=10, label="Texte source", placeholder="Colle des notes de cours (anglais OK).")
-
-    ###     btn = gr.Button("Générer & sauvegarder")
-
-    ###     preview = gr.Dataframe(
-    ###         headers=["id", "question", "answer", "hint", "tags"],
-    ###         datatype=["number", "str", "str", "str", "str"],
-    ###         interactive=False,
-    ###         label="Aperçu",
-    ###     )
-    ###     msg = gr.Markdown(value="")
-
-    ### ------------------------- ###
-    ###     Manual review tab     ###
-    ### ------------------------- ###
-    ### with gr.Tab("Réviser"):
-    ###     card_id = gr.State(value=None)
-
-    ###     btn_load = gr.Button("Charger une carte due")
-    ###     info = gr.Markdown()
-    ###     question = gr.Markdown("—")
-    ###     answer = gr.Markdown("—")
-    ###     btn_reveal = gr.Button("Afficher la réponse")
-
-    ###     ### Grading buttons
-    ###     with gr.Row():
-    ###         b_again = gr.Button("Again")
-    ###         b_hard = gr.Button("Hard")
-    ###         b_good = gr.Button("Good")
-    ###         b_easy = gr.Button("Easy")
-
-    ###     btn_load.click(load_due_card, outputs=[card_id, info, question, answer])
-    ###     btn_reveal.click(reveal_answer, inputs=[card_id], outputs=[answer])
-
-    ###     b_again.click(grade_again, inputs=[card_id], outputs=[card_id, answer, question, info])
-    ###     b_hard.click(grade_hard, inputs=[card_id], outputs=[card_id, answer, question, info])
-    ###     b_good.click(grade_good, inputs=[card_id], outputs=[card_id, answer, question, info])
-    ###     b_easy.click(grade_easy, inputs=[card_id], outputs=[card_id, answer, question, info])
 
 ### ------------------------- ###
 ###    Application launch     ###

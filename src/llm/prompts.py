@@ -35,7 +35,7 @@ Texte source:
 """
 
 GRADE_PROMPT = """Tu es un correcteur strict.
-Compare la question, la réponse attendue et la réponse de l'élève.
+Compare la question, la réponse attendue et la réponse de l'élève. TU DOIS RÉPONDRE UNIQUEMENT EN FRANÇAIS.
 Retourne UNIQUEMENT un JSON valide (pas de texte autour) avec les clés:
 - grade: "Again" | "Hard" | "Good" | "Easy"
 - confidence: nombre entre 0 et 1
